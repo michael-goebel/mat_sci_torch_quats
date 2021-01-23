@@ -11,9 +11,28 @@ qj = np.roll(np.diag([-1,1,1,-1]),-2,axis=1)
 qk = np.diag([-1,-1,1,1])[:,::-1]
 qi = np.matmul(qj,qk)
 
-Q_arr = torch.tensor([q1,qi,qj,qk]).float()
-Q_arr_flat = Q_arr.reshape((4,16))
+Q_arr = np.array([q1,qi,qj,qk])
+#Q_arr_flat = Q_arr.reshape((4,16))
 
+
+def use_numpy(): set_arr_type('n')
+def use_torch(): set_arr_type('t')
+
+def set_arr_type(t):
+    n = t = 'n'
+    global asarray, matmul, moveaxis, randn, norm, arccos, \
+            array_copy, zeros, Q_arr_flat
+    asarray = np.asarray if n else torch.as_tensor
+    matmul = np.matmul if n else torch.matmul
+    moveaxis = np.moveaxis if n else torch.movedim
+    randn = np.random.standard_normal if n else torch.randn
+    norm = lambda x: np.linalg.norm(x,axis=-1,keepdims=True) if n else \
+            torch.norm(x,dim=-1,keepdims=True)
+    arccos = np.arccos if n else torch.arccos
+    array_copy = np.copy if n else torch.clone
+    zeros = np.zeros if n else torch.zeros
+    Q_arr_flat = asarray(Q_arr.reshape((4,16)))
+    
 
 
 def broadcastable(s1,s2):
@@ -26,7 +45,7 @@ def broadcastable(s1,s2):
 def vec2mat(X):
     assert X.shape[-1] == 4, 'Last dimension must be of size 4'
     new_shape = X.shape[:-1] + (4,4)
-    return torch.matmul(X,Q_arr_flat).reshape(new_shape)
+    return matmul(X,Q_arr_flat).reshape(new_shape)
 
 
 def hadamard_prod(q1,q2):
@@ -43,35 +62,29 @@ def hadamard_prod(q1,q2):
 # output will be of size (s1,s2,s3,s4,s5,4)
 def outer_prod(q1,q2):
     X1 = vec2mat(q1.X)
-    X2 = torch.movedim(q2.X,-1,0)
+    X2 = moveaxis(q2.X,-1,0)
     X1_flat = X1.reshape((-1,4))
     X2_flat = X2.reshape((4,-1))
-    print(X1_flat.shape, X2_flat.shape)
-    X_out = torch.matmul(X1_flat,X2_flat)
+    X_out = matmul(X1_flat,X2_flat)
     X_out = X_out.reshape(q1.X.shape + q2.X.shape[:-1])
-    X_out = torch.movedim(X_out,len(q1.X.shape)-1,-1)
+    X_out = moveaxis(X_out,len(q1.X.shape)-1,-1)
 
     return Quat(X_out)
 
 
-# Initialize an array of identity quats like q
-def quat_like(q):
-    X = torch.zeros_like(q.X)
-    X[...,0] = 1
-    return Quat(X)
 
 def quat_rand(shape):
     if not isinstance(shape,tuple): shape = (shape,)
-    X = torch.randn(shape + (4,))
-    X /= torch.norm(X,dim=-1,keepdim=True)
+    X = randn(shape + (4,))
+    X /= norm(X)
     return Quat(X)
 
 
 # get distance between two sets of quats in radians
 def quat_dist(q1,q2=None):
-    if q2 is None: q2 = quat_like(q1)
-    corr = (q1.X*q2.X).sum(-1)
-    return torch.arccos(corr)
+    if q2 is None: corr = q1.X[...,0]
+    else: corr = (q1.X*q2.X).sum(-1)
+    return arccos(corr)
 
 # get distance between two sets rotations, accounting
 # for q <-> -q equivalence
@@ -82,7 +95,7 @@ def rot_dist(q1,q2=None):
 
 class Quat:
     def __init__(self,X):
-        self.X = torch.as_tensor(X).float()
+        self.X = asarray(X)
         assert self.X.shape[-1] == 4, 'Last dimension must be of size 4'
         self.shape = self.X.shape[:-1]
 
@@ -105,7 +118,8 @@ class Quat:
         return Quat(self.X[index])
 
     def conjugate(self):
-        X_out = self.X.clone()
+        #X_out = self.X.clone()
+        X_out = array_copy(self.X)
         X_out[...,1:] *= -1
         return Quat(X_out)
 
@@ -120,10 +134,11 @@ class Quat:
 
 
     def rotate(self,points,element_wise=False):
-        points = np.asarray(points)
+        #points = np.asarray(points)
+        points = asarray(points)
         assert points.shape[-1] == 3, 'Last dimension must be of size 3'
 
-        P = np.zeros(points.shape[:-1] + (4,))
+        P = zeros(points.shape[:-1] + (4,))
         P[...,1:] = points
         qp = Quat(P)
 
@@ -138,6 +153,8 @@ class Quat:
         return X_out[...,1:]
 
 
+# default to using numpy
+use_numpy()
 
 if __name__ == '__main__':
 
@@ -147,47 +164,34 @@ if __name__ == '__main__':
     M = 11
     K = 13
 
-    #q1 = np.random.normal(0,1,(M,4))
-    #q2 = np.random.normal(0,1,(N,4))
+    for i in range(2):
 
-    #q1 /= np.linalg.norm(q1,axis=-1)[:,None]
-    #q2 /= np.linalg.norm(q2,axis=-1)[:,None]
-
-    
-    q1 = quat_rand(M)
-    q2 = quat_rand(N)
-
+        if i == 0:
+            print('using numpy')
+            use_numpy()
+        else: 
+            print('using torch')
+            use_torch()
 
 
-    p1 = torch.randn((K,3))
+        q1 = quat_rand(M)
+        q2 = quat_rand(N)
+
+        p1 = randn((K,3))
+
+        p2 = q2.rotate(q1.rotate(p1))
+        p3 = q2.outer_prod(q1).rotate(p1)
+        p4 = q1.conjugate()[:,None].rotate(q1.rotate(p1),element_wise=True)
+
+        print('Composition of rotation error:')
+        err = norm(p2-p3).sum()
 
 
-    p2 = q2.rotate(q1.rotate(p1))
-    p3 = q2.outer_prod(q1).rotate(p1)
+        print('\t',err,'\n')
 
-    p4 = q1.conjugate()[:,None].rotate(q1.rotate(p1),element_wise=True)
+        print('Rotate then apply inverse rotation error:')
+        err = norm(p4-p1).sum()
 
-    print('Composition of rotation error:')
-    err = torch.norm(p2-p3)
-
-
-    print('\t',err,'\n')
-
-    print('Rotate then apply inverse rotation error:')
-    err = torch.norm(p4-p1)
-
-    print('\t',err,'\n')
-
-
-
-
-
-
-
-
-
-
-
-
+        print('\t',err,'\n')
 
 
