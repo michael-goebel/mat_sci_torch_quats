@@ -37,7 +37,8 @@ def matmul(X1,X2):
     elif not is_np(X1) and not is_np(X2):
         return torch.matmul(X1,X2)
     else:
-        print('error')
+        str_types = ['numpy' if is_np(X) else 'torch' for X in [X1,X2]]
+        raise Exception(f'X1 is {str_types[0]} and X2 is {str_types[1]}')
 
 
 def is_np(X): return isinstance(X,np.ndarray)
@@ -147,7 +148,7 @@ class Quat:
 
     def to_numpy(self): return Quat(self.X.numpy())
 
-    def to_torch(self): return Quat(torch.as_tensor(self.X))
+    def to_torch(self): return Quat(torch.as_tensor(self.X).float())
 
     def conjugate(self):
         X_out = array_copy(self.X)
