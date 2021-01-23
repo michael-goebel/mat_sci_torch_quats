@@ -12,27 +12,35 @@ qk = np.diag([-1,-1,1,1])[:,::-1]
 qi = np.matmul(qj,qk)
 
 Q_arr = np.array([q1,qi,qj,qk])
-#Q_arr_flat = Q_arr.reshape((4,16))
 
 
-def use_numpy(): set_arr_type('n')
-def use_torch(): set_arr_type('t')
+Q_arr_flat_np = Q_arr.reshape((4,16))
+Q_arr_flat_torch = torch.as_tensor(Q_arr_flat_np).float()
 
-def set_arr_type(t):
-    n = t = 'n'
-    global asarray, matmul, moveaxis, randn, norm, arccos, \
-            array_copy, zeros, Q_arr_flat
-    asarray = np.asarray if n else torch.as_tensor
-    matmul = np.matmul if n else torch.matmul
-    moveaxis = np.moveaxis if n else torch.movedim
-    randn = np.random.standard_normal if n else torch.randn
-    norm = lambda x: np.linalg.norm(x,axis=-1,keepdims=True) if n else \
-            torch.norm(x,dim=-1,keepdims=True)
-    arccos = np.arccos if n else torch.arccos
-    array_copy = np.copy if n else torch.clone
-    zeros = np.zeros if n else torch.zeros
-    Q_arr_flat = asarray(Q_arr.reshape((4,16)))
-    
+
+def norm(X):
+    if is_np(X): return np.linalg.norm(X,axis=-1,keepdims=True)
+    else: return torch.norm(X,dim=-1,keepdim=True)
+
+def arccos(X):
+    return np.arccos(X) if is_np(X) else torch.arccos(X)
+
+def moveaxis(X,src,dst):
+    return np.moveaxis(X,src,dst) if is_np(X) else torch.movedim(X,src,dst)
+
+def array_copy(X):
+    return np.copy(X) if is_np(X) else X.clone()
+
+def matmul(X1,X2):
+    if is_np(X1) and is_np(X2):
+        return np.matmul(X1,X2)
+    elif not is_np(X1) and not is_np(X2):
+        return torch.matmul(X1,X2)
+    else:
+        print('error')
+
+
+def is_np(X): return isinstance(X,np.ndarray)
 
 
 def broadcastable(s1,s2):
@@ -45,7 +53,8 @@ def broadcastable(s1,s2):
 def vec2mat(X):
     assert X.shape[-1] == 4, 'Last dimension must be of size 4'
     new_shape = X.shape[:-1] + (4,4)
-    return matmul(X,Q_arr_flat).reshape(new_shape)
+    if is_np(X): return np.matmul(X,Q_arr_flat_np).reshape(new_shape)
+    else: return torch.matmul(X,Q_arr_flat_torch).reshape(new_shape)
 
 
 def hadamard_prod(q1,q2):
@@ -72,12 +81,20 @@ def outer_prod(q1,q2):
     return Quat(X_out)
 
 
-
-def quat_rand(shape):
+def rand_arr(shape,use_torch):
     if not isinstance(shape,tuple): shape = (shape,)
-    X = randn(shape + (4,))
+    if use_torch: X = torch.randn(shape)
+    else: X = np.random.standard_normal(shape)
     X /= norm(X)
-    return Quat(X)
+    return X
+
+def rand_points(shape,use_torch=False):
+    if not isinstance(shape,tuple): shape = (shape,)
+    return rand_arr(shape + (3,),use_torch)
+
+def rand_quats(shape,use_torch=False):
+    if not isinstance(shape,tuple): shape = (shape,)
+    return Quat(rand_arr(shape+(4,),use_torch))
 
 
 # get distance between two sets of quats in radians
@@ -92,10 +109,19 @@ def rot_dist(q1,q2=None):
     dq = quat_dist(q1,q2)
     return pi - abs(2*dq - pi)    
 
+def rot_dist_w_syms(q1,q2,syms):
+    q1_w_syms = q1.outer_prod(syms)
+    if q2 is not None: q2 = q2[...,None]
+    dists = rot_dist(q1_w_syms,q2)
+    if is_np(dists): dist_min = dists.min(-1)
+    else: dist_min = dists.min(-1)[0]
+    return dist_min
 
 class Quat:
-    def __init__(self,X):
-        self.X = asarray(X)
+    def __init__(self,X,use_torch=False):
+        if not use_torch and not isinstance(X,torch.Tensor):
+            self.X = np.asarray(X)
+        else: self.X = torch.as_tensor(X)
         assert self.X.shape[-1] == 4, 'Last dimension must be of size 4'
         self.shape = self.X.shape[:-1]
 
@@ -115,10 +141,15 @@ class Quat:
         return str(self.X)
 
     def __getitem__(self,index):
+        if isinstance(index,tuple): index = index + (slice(None),)
+        else: index = (index,slice(None))
         return Quat(self.X[index])
 
+    def to_numpy(self): return Quat(self.X.numpy())
+
+    def to_torch(self): return Quat(torch.as_tensor(self.X))
+
     def conjugate(self):
-        #X_out = self.X.clone()
         X_out = array_copy(self.X)
         X_out[...,1:] *= -1
         return Quat(X_out)
@@ -134,27 +165,27 @@ class Quat:
 
 
     def rotate(self,points,element_wise=False):
-        #points = np.asarray(points)
-        points = asarray(points)
+        if is_np(self.X):
+            points = np.asarray(points)
+            P = np.zeros(points.shape[:-1] + (4,))
+        else:
+            points = torch.as_tensor(points)
+            P = torch.zeros(points.shape[:-1] + (4,))
         assert points.shape[-1] == 3, 'Last dimension must be of size 3'
 
-        P = zeros(points.shape[:-1] + (4,))
         P[...,1:] = points
         qp = Quat(P)
 
         if element_wise:
             X_out = (self * qp * self.conjugate()).X
-
         else:
             X_int = self.outer_prod(qp)
-            inds = (slice(None),)*(len(self.X.shape)-1) + (None,)*(len(qp.X.shape)) + (slice(None),)
+            inds = (slice(None),)*(len(self.X.shape)-1) + \
+                    (None,)*(len(qp.X.shape)) + (slice(None),)
             X_out = (vec2mat(X_int.X) * self.conjugate().X[inds]).sum(-1)
-
         return X_out[...,1:]
 
 
-# default to using numpy
-use_numpy()
 
 if __name__ == '__main__':
 
@@ -166,32 +197,25 @@ if __name__ == '__main__':
 
     for i in range(2):
 
+        use_torch = bool(i)
         if i == 0:
-            print('using numpy')
-            use_numpy()
+            print('using numpy (default float64)')
         else: 
-            print('using torch')
-            use_torch()
+            print('using torch (default float32)')
 
-
-        q1 = quat_rand(M)
-        q2 = quat_rand(N)
-
-        p1 = randn((K,3))
+        q1 = rand_quats(M,use_torch)
+        q2 = rand_quats(N,use_torch)
+        p1 = rand_points(K,use_torch)
 
         p2 = q2.rotate(q1.rotate(p1))
         p3 = q2.outer_prod(q1).rotate(p1)
         p4 = q1.conjugate()[:,None].rotate(q1.rotate(p1),element_wise=True)
 
         print('Composition of rotation error:')
-        err = norm(p2-p3).sum()
-
-
+        err = abs(p2-p3).sum()/np.prod(p2.shape)
         print('\t',err,'\n')
 
         print('Rotate then apply inverse rotation error:')
-        err = norm(p4-p1).sum()
-
+        err = abs(p4-p1).sum()/np.prod(p4.shape)
         print('\t',err,'\n')
-
 
