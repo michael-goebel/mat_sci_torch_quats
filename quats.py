@@ -58,8 +58,12 @@ def _broadcastable(s1,s2):
 def _vec2mat(X):
     assert X.shape[-1] == 4, 'Last dimension must be of size 4'
     new_shape = X.shape[:-1] + (4,4)
-    if _is_np(X): return np.matmul(X,Q_arr_flat_np).reshape(new_shape)
-    else: return torch.matmul(X,Q_arr_flat_torch).reshape(new_shape)
+    if _is_np(X):
+        return np.matmul(X,Q_arr_flat_np).reshape(new_shape)
+    else:
+        device = X.device
+        Q = Q_arr_flat_torch.to(device)
+        return torch.matmul(X,Q).reshape(new_shape)
 
 
 
@@ -181,6 +185,8 @@ class Quat:
         else: index = (index,slice(None))
         return Quat(self.X[index])
 
+    def to(self,device): return Quat(self.X.to(device))
+
     def to_numpy(self): return Quat(self.X.numpy())
 
     def to_torch(self): return Quat(torch.as_tensor(self.X).float())
@@ -205,7 +211,7 @@ class Quat:
             P = np.zeros(points.shape[:-1] + (4,))
         else:
             points = torch.as_tensor(points)
-            P = torch.zeros(points.shape[:-1] + (4,))
+            P = torch.zeros(points.shape[:-1] + (4,)).to(self.X.device)
         assert points.shape[-1] == 3, 'Last dimension must be of size 3'
         P[...,1:] = points
         qp = Quat(P)
@@ -238,6 +244,11 @@ if __name__ == '__main__':
         q1 = rand_quats(M,use_torch)
         q2 = rand_quats(N,use_torch)
         p1 = rand_points(K,use_torch)
+
+        if i == 1:
+            q1 = q1.to('cuda')
+            q2 = q2.to('cuda')
+            p1 = p1.to('cuda')
 
         p2 = q2.rotate(q1.rotate(p1))
         p3 = q2.outer_prod(q1).rotate(p1)
