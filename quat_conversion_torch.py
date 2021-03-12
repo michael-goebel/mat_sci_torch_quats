@@ -46,22 +46,15 @@ R1   = (3.*math.pi/4.)**(1./3.)
 
 #---------- Quaternion Operations ----------
 
-def quat2cubo(qu, scalar_first=True ):
-    """Quaternion to cubochoric vector."""
+def quat2cubo(qu):
+    """Quaternion to cubochoric vector.
+        Quaternion must be in form s, <x,y,z>
+        where s is real component, and <x,y,z>
+        is imaginary vector component
+    """
 
     """ Step 1: Quaternion to homochoric vector."""
 
-    # Converting Quaternion Order convention
-    # DREAM3D convention is <xyz> s (<xyz> = imaginary vector component)
-    # Convention used here is s <xyz>
-    # This conversion is <xyz>,s to s,<xyz>
-    if scalar_first is not True:
-        # if qu.ndim == 1:
-        #     qu = torch.unsqueeze(qu, dim=0)
-        qu = torch.index_select(qu, -1, _device_check(torch.LongTensor([3, 0, 1, 2]), qu.device))
-    #-------
-
-    # with np.errstate(invalid='ignore'):
     omega = 2.0 * torch.arccos(torch.clip(qu[..., 0:1], -1.0, 1.0))
 
     ho = torch.where(torch.lt(torch.abs(omega), 1.0e-12),
@@ -82,11 +75,7 @@ def quat2cubo(qu, scalar_first=True ):
         """
     rs = torch.linalg.norm(ho, dim=-1, keepdim=True)
 
-    # xyz3 = np.take_along_axis(ho, _get_pyramid_order(ho, 'forward'), -1)
     xyz3 = torch.gather(ho, -1, _get_tensor_pyramid_order(ho, 'forward'))
-
-    # with np.errstate(invalid='ignore', divide='ignore'):
-    # inverse M_3
 
     xyz2 = xyz3[..., 0:2] * torch.sqrt(2.0 * rs / (rs + torch.abs(xyz3[..., 2:3])))
     qxy = torch.sum(xyz2 ** 2, -1, keepdim=True)
@@ -99,7 +88,7 @@ def quat2cubo(qu, scalar_first=True ):
     T_inv = torch.where(torch.le(torch.abs(xyz2[..., 1:2]), torch.abs(xyz2[..., 0:1])),
                      torch.cat((torch.ones_like(tt), torch.arccos(tt)/math.pi*12), dim=-1),
                      torch.cat((torch.arccos(tt)/math.pi*12, torch.ones_like(tt)), dim=-1)) * q
-    T_inv[xyz2 < 0.0] *= -1.0  # warning
+    T_inv[xyz2 < 0.0] *= -1.0
 
     T_inv[(torch.isclose(qxy, _precision_check(0.0, qxy.dtype), rtol=0.0, atol=1.0e-12)).expand(T_inv.shape)] = 0.0
     cu = torch.cat((T_inv, torch.where(torch.lt(xyz3[..., 2:3],0.0), -torch.ones_like(xyz3[..., 2:3]), torch.ones_like(xyz3[..., 2:3])) \
@@ -110,20 +99,15 @@ def quat2cubo(qu, scalar_first=True ):
 
     return cu
 
-def quat2rod(qu, scalar_first=True):
+def quat2rod(qu):
+    """Quaternion to Rodrigues-Frank vector.
+            Quaternion must be in form s, <x,y,z>
+            where s is real component, and <x,y,z>
+            is imaginary vector component
+        """
+
     """Step 1: Quaternion to Rodrigues-Frank vector."""
 
-    # Converting Quaternion Order convention
-    # DREAM3D convention is <xyz> s (<xyz> = imaginary vector component)
-    # Convention used here is s <xyz>
-    # This conversion is <xyz>,s to s,<xyz>
-    if scalar_first is not True:
-        # if qu.ndim == 1:
-        #     qu = torch.unsqueeze(qu, dim=0)
-        qu = torch.index_select(qu, -1, _device_check(torch.LongTensor([3, 0, 1, 2]), qu.device))
-    # -------
-
-    # with np.errstate(invalid='ignore', divide='ignore'):
     s = torch.linalg.norm(qu[..., 1:4], dim=-1, keepdim=True)
     ro = torch.where(torch.lt(torch.abs(qu[..., 0:1]), 1.0e-12).expand(qu.shape),
                      torch.cat((qu[..., 1:2], qu[..., 2:3], qu[..., 3:4],
@@ -136,8 +120,12 @@ def quat2rod(qu, scalar_first=True):
 
 #---------- Cubochoric Operations ----------
 
-def cubo2quat(cu, scalar_first=True):
-    """Cubochoric vector to quaternion."""
+def cubo2quat(cu):
+    """Cubochoric vector to quaternion.
+        Quaternion returned in form s, <x,y,z>
+        where s is real component, and <x,y,z>
+        is imaginary vector component
+    """
 
     """
         Step 1: Cubochoric vector to homochoric vector.
@@ -147,9 +135,7 @@ def cubo2quat(cu, scalar_first=True):
         D. Roşca et al., Modelling and Simulation in Materials Science and Engineering 22:075013, 2014
         https://doi.org/10.1088/0965-0393/22/7/075013
 
-        """
-    # with np.errstate(invalid='ignore', divide='ignore'):
-    # get pyramide and scale by grid parameter ratio
+    """
     XYZ = torch.gather(cu, -1, _get_tensor_pyramid_order(cu, 'forward')) * sc
     order = torch.le(torch.abs(XYZ[..., 1:2]), torch.abs(XYZ[..., 0:1]))
     q = math.pi / 12.0 * torch.where(order, XYZ[..., 1:2], XYZ[..., 0:1]) \
@@ -161,7 +147,6 @@ def cubo2quat(cu, scalar_first=True):
 
 
     T = torch.cat(((math.sqrt(2.0) * c - 1.0), math.sqrt(2.0) * s), dim=-1)*q
-
 
     # transform to sphere grid (inverse Lambert)
     c = torch.sum(T ** 2, -1, keepdim=True)
@@ -180,7 +165,6 @@ def cubo2quat(cu, scalar_first=True):
 
 
     ho = torch.gather(ho, -1, _get_tensor_pyramid_order(cu, 'backward'))
-
 
     # return ho # here for homochoric
 
@@ -202,7 +186,6 @@ def cubo2quat(cu, scalar_first=True):
         hm *= hmag_squared
         s += tfit[i] * hm
 
-    # with np.errstate(invalid='ignore'):
     ax = torch.where(torch.lt(torch.abs(hmag_squared), torch.tensor(1.e-8)).expand(ho.shape[:-1] + (4,)),
                   _precision_check([0.0, 0.0, 1.0, 0.0], ho.dtype, ho.device),
                   torch.cat((ho / torch.sqrt(hmag_squared), 2.0 * torch.arccos(torch.clip(s, -1.0, 1.0))), dim=-1))
@@ -214,20 +197,14 @@ def cubo2quat(cu, scalar_first=True):
     s = torch.sin(ax[..., 3:4] * .5)
     qu = torch.where(torch.lt(torch.abs(ax[..., 3:4]), 1.e-6), _precision_check([1.0, 0.0, 0.0, 0.0], ax.dtype, ax.device), torch.cat((c, ax[..., :3] * s), dim=-1))
 
-    # Converting Quaternion Order convention
-    # DREAM3D convention is <xyz> s (<xyz> = imaginary vector component)
-    # Convention used here is s <xyz>
-    # This conversion is s,<xyz> to <xyz>,s
-    if scalar_first is not True:
-        # if qu.ndim == 1:
-        #     qu = torch.unsqueeze(qu, dim=0)
-        qu = torch.index_select(qu, -1, _device_check(torch.LongTensor([1, 2, 3, 0]), qu.device))
-    #-------
-
     return qu
 
 def cubo2rod(cu):
-    """Cubochoric vector to quaternion."""
+    """Cubochoric vector to Rodrigues-Frank vector.
+        Quaternion returned in form s, <x,y,z>
+        where s is real component, and <x,y,z>
+        is imaginary vector component
+    """
 
     """
         Step 1: Cubochoric vector to homochoric vector.
@@ -238,8 +215,8 @@ def cubo2rod(cu):
         https://doi.org/10.1088/0965-0393/22/7/075013
 
         """
-    # with np.errstate(invalid='ignore', divide='ignore'):
-    # get pyramide and scale by grid parameter ratio
+
+    # get pyramid and scale by grid parameter ratio
     XYZ = torch.gather(cu, -1, _get_tensor_pyramid_order(cu, 'forward')) * sc
     order = torch.le(torch.abs(XYZ[..., 1:2]), torch.abs(XYZ[..., 0:1]))
     q = math.pi / 12.0 * torch.where(order, XYZ[..., 1:2], XYZ[..., 0:1]) \
@@ -307,6 +284,8 @@ def cubo2rod(cu):
 #---------- Rodrigues Operations ----------
 
 def rod2cubo(ro):
+    """ Rodrigues-Frank vector to cubochoric vector"""
+
     """ Step 1: Rodrigues-Frank vector to homochoric vector."""
 
     f = torch.where(torch.isfinite(ro[...,3:4]),2.0*torch.arctan(ro[...,3:4]) -torch.sin(2.0*torch.arctan(ro[...,3:4])), _precision_check(math.pi, ro.dtype, ro.device))
@@ -327,11 +306,7 @@ def rod2cubo(ro):
         """
     rs = torch.linalg.norm(ho, dim=-1, keepdim=True)
 
-    # xyz3 = np.take_along_axis(ho, _get_pyramid_order(ho, 'forward'), -1)
     xyz3 = torch.gather(ho, -1, _get_tensor_pyramid_order(ho, 'forward'))
-
-    # with np.errstate(invalid='ignore', divide='ignore'):
-    # inverse M_3
 
     xyz2 = xyz3[..., 0:2] * torch.sqrt(2.0 * rs / (rs + torch.abs(xyz3[..., 2:3])))
     qxy = torch.sum(xyz2 ** 2, -1, keepdim=True)
@@ -355,37 +330,39 @@ def rod2cubo(ro):
 
     return cu
 
-def rod2quat(ro, scalar_first=True):
+def rod2quat(ro):
+    """ Rodrigues-Frank vector to Quaternion
+        Quaternion returned in form s, <x,y,z>
+        where s is real component, and <x,y,z>
+        is imaginary vector component
+    """
+
     """Step 1:  Rodrigues-Frank vector to axis angle pair."""
-    # with np.errstate(invalid='ignore',divide='ignore'):
+
     ax = torch.where(torch.isfinite(ro[...,3:4]),
          torch.cat((ro[...,0:3]*torch.linalg.norm(ro[...,0:3],dim=-1,keepdim=True), 2.*torch.arctan(ro[...,3:4])), dim=-1),
          torch.cat((ro[...,0:3], _precision_check(math.pi, ro.dtype, ro.device).expand(ro[...,3:4].shape)), dim=-1))
     ax[torch.lt(torch.abs(ro[...,3]), 1.e-8)]  = _precision_check([ 0.0, 0.0, 1.0, 0.0 ], ro.dtype, ro.device)
+
     # return ax # here for axis angle pair
 
-    """Step 3: Axis angle pair to quaternion."""
+    """Step 2: Axis angle pair to quaternion."""
     c = torch.cos(ax[..., 3:4] * .5)
     s = torch.sin(ax[..., 3:4] * .5)
     qu = torch.where(torch.lt(torch.abs(ax[..., 3:4]), 1.e-6), _precision_check([1.0, 0.0, 0.0, 0.0], ax.dtype, ax.device), torch.cat((c, ax[..., :3] * s), dim=-1))
-
-    # Converting Quaternion Order convention
-    # DREAM3D convention is <xyz> s (<xyz> = imaginary vector component)
-    # Convention used here is s <xyz>
-    # This conversion is s,<xyz> to <xyz>,s
-    if scalar_first is not True:
-        # if qu.ndim == 1:
-        #     qu = torch.unsqueeze(qu, dim=0)
-        qu = torch.index_select(qu, -1, _device_check(torch.LongTensor([1, 2, 3, 0]), qu.device))
-    # -------
 
     return qu
 
 #---------- Core/Convention Functions ----------
 def _cbrt(x):
+    """Pytorch-based cube root function.  Always returns real root."""
     return torch.where(torch.lt(x, 0), -(torch.abs(x)**(1/3)), x**(1/3))
 
 def _precision_check(value, datatype, devicetype=None):
+    """ Combined Precision and data type check for Pytorch tensors.
+        Ensures compatability between input and conversion operation
+        tensors for all torch-based math operations.
+    """
     if torch.is_tensor(value) is False:
         value = torch.as_tensor(value)
 
@@ -404,6 +381,10 @@ def _precision_check(value, datatype, devicetype=None):
         return torch.tensor(value)
 
 def _device_check(value, devicetype):
+    """ Data type check for Pytorch tensors.  Submethod of _precision_check
+        Ensures compatability between input and conversion operation
+        tensors for all torch-based math operations.
+    """
     if torch.is_tensor(value) is False:
         value = torch.as_tensor(value)
 
