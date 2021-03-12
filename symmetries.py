@@ -1,34 +1,38 @@
 import numpy as np
-from quats import Quat
-
+#from quats import Quat
+import torch
+from quats3 import outer_prod
 
 #rotate by 0 or 180 degrees about x axis
-hcp_r1 = Quat(np.eye(4)[:2])
+hcp_r1 = torch.eye(4)[:2]
+
 
 # rotate about 0, 60, ... 300 degrees about z axis
-hcp_r2 = np.zeros((6,4))
-hcp_r2[:,0] = np.cos(np.arange(6)/6*np.pi)
-hcp_r2[:,3] = np.sin(np.arange(6)/6*np.pi)
-hcp_r2 = Quat(hcp_r2)
-hcp_syms = hcp_r2.outer_prod(hcp_r1).transpose((1,0)).reshape(-1)
+hcp_r2 = torch.zeros((6,4))
+hcp_r2[:,0] = torch.cos(torch.arange(6)/6*np.pi)
+hcp_r2[:,3] = torch.sin(torch.arange(6)/6*np.pi)
+hcp_syms = outer_prod(hcp_r1,hcp_r2).reshape((-1,4))
+
+#hcp_syms = hcp_r2.outer_prod(hcp_r1).transpose((1,0)).reshape(-1)
 
 
 # rotate about diagonal on cube
 fcc_r1 = np.zeros((3,4))
 fcc_r1[:,0] = np.cos(2/3*np.pi*np.arange(3))
 fcc_r1[:,1:] = (np.sin(2/3*np.pi*np.arange(3))/np.sqrt(3))[:,None]
-fcc_r1 = Quat(fcc_r1)
 
 # rotate by 0 or 180 degrees around x-axis
-fcc_r2 = Quat(np.array(np.eye(4)[:2]))
+fcc_r2 = np.array(np.eye(4)[:2])
 
 fcc_r3 = np.zeros((4,4))
 fcc_r3[:,0] = np.cos(np.pi/4*np.arange(4))
 fcc_r3[:,3] = np.sin(np.pi/4*np.arange(4))
-fcc_r3 = Quat(fcc_r3)
 
-fcc_r12 = fcc_r2.outer_prod(fcc_r1)
-fcc_syms = fcc_r3.outer_prod(fcc_r12).reshape(-1)
+#fcc_r12 = outer_prod(fcc_r1,fcc_r2)
+#fcc_syms = outer_prod(fcc_r12,fcc_r3).reshape((-1,4))
+
+#fcc_r12 = fcc_r2.outer_prod(fcc_r1)
+#fcc_syms = fcc_r3.outer_prod(fcc_r12).reshape(-1)
 
 
 

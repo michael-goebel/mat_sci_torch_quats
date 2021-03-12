@@ -41,7 +41,9 @@ def _matmul(X1,X2):
         str_types = ['numpy' if _is_np(X) else 'torch' for X in [X1,X2]]
         raise Exception(f'X1 is {str_types[0]} and X2 is {str_types[1]}')
 
-
+def _sign(X):
+    if _is_np(X): return np.sign(X)
+    else: return torch.sign(X)
 
 # Other utility functions
 def _is_np(X): return isinstance(X,np.ndarray)
@@ -143,24 +145,50 @@ def rot_dist_w_syms(q1,q2,syms):
     else: dist_min = dists.min(-1)[0]
     return dist_min
 
+def fz_reduce(q,syms):
+    q_w_syms = outer_prod(q,syms)
+    dists = rot_dist(q_w_syms)
+    if _is_np(q): inds = np.argmin(dists,axis=-1)
+    else: inds = dists.min(-1)[1]
+    q_fz = q[inds]
 
 
 def _roll(q,v):
-    is_quat = 
-    
-    
-    #    if isinstance(q,Quat):
-
-
     if _is_np(X): return np.roll(X,v,axis=-1)
     else: return torch.roll(X,v,axis=-1)
-
 
 def scalar_first2last(X):
     return _roll(X,-1)
 
 def scalar_last2first(X):
     return _roll(X,1)
+
+def conj(q):
+    q_out = _array_copy(q)
+    q_out[...,1:] *= -1
+    return q_out
+
+
+def rotate(q,points,element_wise=False):
+    if _is_np(self.X):
+        points = np.asarray(points)
+        P = np.zeros(points.shape[:-1] + (4,))
+    else:
+        points = torch.as_tensor(points)
+        P = torch.zeros(points.shape[:-1] + (4,)).to(self.X.device)
+    assert points.shape[-1] == 3, 'Last dimension must be of size 3'
+    P[...,1:] = points
+    if element_wise:
+        X_int = hadamard_prod(q,P)
+        X_out = hadamard_prod(X_int,conj(q))
+    else:
+        X_int = outer_prod(q,P)
+        inds = (slice(None),)*(len(self.X.shape)-1) + \
+                (None,)*(len(qp.X.shape)) + (slice(None),)
+        X_out = (_vec2mat(X_int) * conj(q)).sum(-1)
+
+
+
 
 
 
