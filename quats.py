@@ -3,7 +3,6 @@ from math import pi
 import torch
 import numpy as np
 
-
 # Defines mapping from quat vector to matrix. Though there are many
 # possible matrix representations, this one is selected since the
 # first row, X[...,0], is the vector form.
@@ -12,39 +11,10 @@ q1 = np.diag([1,1,1,1])
 qj = np.roll(np.diag([-1,1,1,-1]),-2,axis=1)
 qk = np.diag([-1,-1,1,1])[:,::-1]
 qi = np.matmul(qj,qk)
-Q_arr = np.array([q1,qi,qj,qk])
-Q_arr_flat_np = Q_arr.reshape((4,16))
-Q_arr_flat_torch = torch.as_tensor(Q_arr_flat_np).float()
+Q_arr = torch.Tensor([q1,qi,qj,qk])
+Q_arr_flat = Q_arr.reshape((4,16)).float()
 
 
-
-# This section defines common array operations, which check whether or
-# not the input is numpy or torch, then applies the corresponding operation
-
-# Get L2 norm along last axis
-def _norm(X):
-    if _is_np(X): return np.linalg.norm(X,axis=-1,keepdims=True)
-    else: return torch.norm(X,dim=-1,keepdim=True)
-
-def _moveaxis(X,src,dst):
-    return np.moveaxis(X,src,dst) if _is_np(X) else torch.movedim(X,src,dst)
-
-def _array_copy(X):
-    return np.copy(X) if _is_np(X) else X.clone()
-
-def _matmul(X1,X2):
-    if _is_np(X1) and _is_np(X2):
-        return np.matmul(X1,X2)
-    elif not _is_np(X1) and not _is_np(X2):
-        return torch.matmul(X1,X2)
-    else:
-        str_types = ['numpy' if _is_np(X) else 'torch' for X in [X1,X2]]
-        raise Exception(f'X1 is {str_types[0]} and X2 is {str_types[1]}')
-
-
-
-# Other utility functions
-def _is_np(X): return isinstance(X,np.ndarray)
 
 # Checks if 2 arrays can be broadcast together
 def _broadcastable(s1,s2):
@@ -55,16 +25,12 @@ def _broadcastable(s1,s2):
 
 # Converts an array of quats as vectors to matrices. Generally
 # used to facilitate quat multiplication.
-def _vec2mat(X):
+def vec2mat(X):
     assert X.shape[-1] == 4, 'Last dimension must be of size 4'
     new_shape = X.shape[:-1] + (4,4)
-    if _is_np(X):
-        return np.matmul(X,Q_arr_flat_np).reshape(new_shape)
-    else:
-        device = X.device
-        Q = Q_arr_flat_torch.to(device)
-        return torch.matmul(X,Q).reshape(new_shape)
-
+    device = X.device
+    Q = Q_arr_flat.to(device)
+    return torch.matmul(X,Q).reshape(new_shape)
 
 
 # Performs element-wise multiplication, like the standard multiply in
@@ -72,9 +38,9 @@ def _vec2mat(X):
 def hadamard_prod(q1,q2):
     assert _broadcastable(q1.shape,q2.shape), 'Inputs of shapes ' \
             f'{q1.shape}, {q2.shape} could not be broadcast together'
-    X1 = _vec2mat(q1.X)
-    X_out = (X1 * q2.X[...,None,:]).sum(-1)
-    return Quat(X_out)
+    X1 = vec2mat(q1)
+    X_out = (X1 * q2[...,None,:]).sum(-1)
+    return X_out
 
 
 
@@ -82,15 +48,15 @@ def hadamard_prod(q1,q2):
 # Ex if X1.shape = (s1,s2,4) and X2.shape = (s3,s4,s5,4),
 # output will be of size (s1,s2,s3,s4,s5,4)
 def outer_prod(q1,q2):
-    X1 = _vec2mat(q1.X)
-    X2 = _moveaxis(q2.X,-1,0)
+    X1 = vec2mat(q1)
+    #X2 = _moveaxis(q2.X,-1,0)
+    X2 = torch.movedim(q2,-1,0)
     X1_flat = X1.reshape((-1,4))
     X2_flat = X2.reshape((4,-1))
-    X_out = _matmul(X1_flat,X2_flat)
-    X_out = X_out.reshape(q1.X.shape + q2.X.shape[:-1])
-    X_out = _moveaxis(X_out,len(q1.X.shape)-1,-1)
-    return Quat(X_out)
-
+    X_out = torch.matmul(X1_flat,X2_flat)
+    X_out = X_out.reshape(q1.shape + q2.shape[:-1])
+    X_out = torch.movedim(X_out,len(q1.shape)-1,-1)
+    return X_out
 
 
 # Utilities to create random vectors on the L2 sphere. First produces
@@ -98,22 +64,21 @@ def outer_prod(q1,q2):
 # and then normalizes onto the unit sphere
 
 # Produces random array of the same size as shape.
-def rand_arr(shape,use_torch):
+def rand_arr(shape):
     if not isinstance(shape,tuple): shape = (shape,)
-    if use_torch: X = torch.randn(shape)
-    else: X = np.random.standard_normal(shape)
-    X /= _norm(X)
+    X = torch.randn(shape)
+    X /= torch.norm(X,dim=-1,keepdim=True)
     return X
 
 # Produces array of 3D points on the unit sphere.
-def rand_points(shape,use_torch=False):
+def rand_points(shape):
     if not isinstance(shape,tuple): shape = (shape,)
-    return rand_arr(shape + (3,),use_torch)
+    return rand_arr(shape + (3,))
 
 # Produces random unit quaternions.
 def rand_quats(shape,use_torch=False):
     if not isinstance(shape,tuple): shape = (shape,)
-    return Quat(rand_arr(shape+(4,),use_torch))
+    return rand_arr(shape+(4,))
 
 
 
@@ -124,9 +89,10 @@ def rand_quats(shape,use_torch=False):
 
 # Get distance between two sets of quats in radians
 def quat_dist(q1,q2=None):
-    if q2 is None: corr = q1.X[...,0]
-    else: corr = (q1.X*q2.X).sum(-1)
-    return np.arccos(corr) if _is_np(corr) else torch.arccos(corr)
+    if q2 is None: corr = q1[...,0]
+    else: corr = (q1*q2).sum(-1)
+    return torch.arccos(corr)
+
 
 # Get distance between two sets rotations, accounting for q <-> -q symmetry
 def rot_dist(q1,q2=None):
@@ -136,149 +102,134 @@ def rot_dist(q1,q2=None):
 # Similar to rot_dist, but will brute-force check all of the provided
 # symmetries, and return the minimum.
 def rot_dist_w_syms(q1,q2,syms):
-    q1_w_syms = q1.outer_prod(syms)
+    #q1_w_syms = q1.outer_prod(syms)
+    q1_w_syms = outer_prod(q1,syms)
     if q2 is not None: q2 = q2[...,None]
     dists = rot_dist(q1_w_syms,q2)
-    if _is_np(dists): dist_min = dists.min(-1)
-    else: dist_min = dists.min(-1)[0]
+    #if _is_np(dists): dist_min = dists.min(-1)
+    #else: dist_min = dists.min(-1)[0]
+    dist_min = dists.min(-1)[0]
     return dist_min
 
-
-
-def _roll(q,v):
-    is_quat = 
-    
-    
-    #    if isinstance(q,Quat):
-
-
-    if _is_np(X): return np.roll(X,v,axis=-1)
-    else: return torch.roll(X,v,axis=-1)
+def fz_reduce(q,syms):
+    shape = q.shape
+    q = q.reshape((-1,4))
+    q_w_syms = outer_prod(q,syms)
+    dists = rot_dist(q_w_syms)
+    inds = dists.min(-1)[1]
+    q_fz = q_w_syms[torch.arange(len(q_w_syms)),inds]
+    q_fz *= torch.sign(q_fz[...,:1])
+    q_fz = q_fz.reshape(shape)
+    return q_fz
 
 
 def scalar_first2last(X):
-    return _roll(X,-1)
+    return torch.roll(X,-1,-1)
 
 def scalar_last2first(X):
-    return _roll(X,1)
+    return torch.roll(X,1,-1)
+
+def conj(q):
+    q_out = q.clone()
+    q_out[...,1:] *= -1
+    return q_out
+
+
+def rotate(q,points,element_wise=False):
+    points = torch.as_tensor(points)
+    P = torch.zeros(points.shape[:-1] + (4,)).to(q.device)
+    assert points.shape[-1] == 3, 'Last dimension must be of size 3'
+    P[...,1:] = points
+    if element_wise:
+        X_int = hadamard_prod(q,P)
+        X_out = hadamard_prod(X_int,conj(q))
+    else:
+        X_int = outer_prod(q,P)
+        inds = (slice(None),)*(len(q.shape)-1) + \
+                (None,)*(len(P.shape)) + (slice(None),)
+        X_out = (vec2mat(X_int) * conj(q)[inds]).sum(-1)
+    return X_out[...,1:]
+
+
+def plot_cdf(q1,q2,syms):
+    import matplotlib.pyplot as plt
+    dists = rot_dist_w_syms(q1,q2,syms)
+    dists = torch.sort(dists.reshape(-1))[0]
+    dists = torch.hstack((torch.Tensor([0]),dists))
+    y = torch.linspace(0,1,len(dists))
+
+    plt.plot(dists,y)
+    plt.title('CDF of orientation error for random vectors')
+    plt.show()
+
+
+def tanhc(x):
+    eps = 0.05
+    mask = (np.abs(x) < eps).float()
+    x_clip = torch.clamp(abs(x),min=eps)
+    output_ts = 1 - (x**2)/3 + 2*(x**4)/15 - 17*(x**6)/315
+    output_ht = torch.tanh(x_clip)/x_clip
+    output = mask*output_ts + (1-mask)*output_ht
+    return output
 
 
 
+def loss_w_tanh(pred,label):
+    """
+    pred: Prediction from the network, of shape (...,4).
+          Can be any vector in R4, tanh will compress this inside unit ball.
+    label: Quaternion GT. Should be unit norm.
+    After training time, convert pred to a unit vector. The magnitude of pred
+        can be though of as a confidence score.
+    """
+    
+    q_pred = pred*tanhc(torch.norm(pred,dim=-1,keepdim=True))
+    delta = q_pred - label
+    mse = (deltas**2).sum(-1)
+    loss = 2*torch.arccos(1 - (1/2)*mse)
 
-# Main class for quaternions
-# Defaults to using numpy unless one of the following is true:
-#     use_torch = True
-#     X is a already a torch tensor
-# You can convert between the two with .use_numpy or .use_torch()
-# Should act like a numpy array or torch tensor in most ways, supporting
-# slicing, addition, subtraction, multiplication, transpose, etc. Also
-# includes a method for rotation of points in 3D. Rotation of another
-# rotation should be done using multiplication.
-class Quat:
-    def __init__(self,X,use_torch=False,scalar_first=True):
-        if not use_torch and not isinstance(X,torch.Tensor):
-            self.X = np.asarray(X)
-        else: self.X = torch.as_tensor(X)
-        assert self.X.shape[-1] == 4, 'Last dimension must be of size 4'
-        self.shape = self.X.shape[:-1]
-        if not scalar_first:
-            if _is_np(self.X): self.X = np.roll(self.X,1,axis=-1)
-            else: self.X = torch.roll(self.X,1,axis=-1)
+    return loss
 
-    def __add__(self,q2):
-        return Quat(self.X+q2.X)
-
-    def __sub__(self,q2):
-        return Quat(self.X-q2.X)
-
-    def __mul__(self,q2):
-        return hadamard_prod(self,q2)
-
-    def outer_prod(self,q2):
-        return outer_prod(self,q2)
-
-    def __str__(self):
-        return str(self.X)
-
-    def __getitem__(self,index):
-        if isinstance(index,tuple): index = index + (slice(None),)
-        else: index = (index,slice(None))
-        return Quat(self.X[index])
-
-    def to(self,device): return Quat(self.X.to(device))
-
-    def to_numpy(self): return Quat(self.X.numpy())
-
-    def to_torch(self): return Quat(torch.as_tensor(self.X).float())
-
-    # Equivalent to the inverse of a rotation
-    def conjugate(self):
-        X_out = _array_copy(self.X)
-        X_out[...,1:] *= -1
-        return Quat(X_out)
-
-    def reshape(self,axes):
-        if isinstance(axes,tuple): return Quat(self.X.reshape(axes + (4,)))
-        else: return Quat(self.X.reshape((axes,4)))
-
-    def transpose(self,axes):
-        assert min(axes) >= 0
-        return Quat(self.X.transpose(axes+(-1,)))
-
-    def rotate(self,points,element_wise=False):
-        if _is_np(self.X):
-            points = np.asarray(points)
-            P = np.zeros(points.shape[:-1] + (4,))
-        else:
-            points = torch.as_tensor(points)
-            P = torch.zeros(points.shape[:-1] + (4,)).to(self.X.device)
-        assert points.shape[-1] == 3, 'Last dimension must be of size 3'
-        P[...,1:] = points
-        qp = Quat(P)
-        if element_wise:
-            X_out = (self * qp * self.conjugate()).X
-        else:
-            X_int = self.outer_prod(qp)
-            inds = (slice(None),)*(len(self.X.shape)-1) + \
-                    (None,)*(len(qp.X.shape)) + (slice(None),)
-            X_out = (_vec2mat(X_int.X) * self.conjugate().X[inds]).sum(-1)
-        return X_out[...,1:]
 
 
 # A simple script to test the quats class for numpy and torch
 if __name__ == '__main__':
 
     np.random.seed(1)
-    N = 7
-    M = 11
+    N = 700
+    M = 1000
     K = 13
 
-    for i in range(2):
+    q1 = rand_quats(M)
+    q2 = rand_quats(N)
+    p1 = rand_points(K)
 
-        use_torch = bool(i)
-        if i == 0:
-            print('using numpy (default float64)')
-        else: 
-            print('using torch (default float32)')
+    p2 = rotate(q2,rotate(q1,p1))
+    p3 = rotate(outer_prod(q2,q1),p1)
+    p4 = rotate(conj(q1[:,None]),rotate(q1,p1),element_wise=True)
 
-        q1 = rand_quats(M,use_torch)
-        q2 = rand_quats(N,use_torch)
-        p1 = rand_points(K,use_torch)
 
-        if i == 1:
-            q1 = q1.to('cuda')
-            q2 = q2.to('cuda')
-            p1 = p1.to('cuda')
+    print('Composition of rotation error:')
+    err = abs(p2-p3).sum()/len(p2.reshape(-1))
+    print('\t',err,'\n')
 
-        p2 = q2.rotate(q1.rotate(p1))
-        p3 = q2.outer_prod(q1).rotate(p1)
-        p4 = q1.conjugate()[:,None].rotate(q1.rotate(p1),element_wise=True)
+    print('Rotate then apply inverse rotation error:')
+    err = abs(p4-p1).sum()/len(p1.reshape(-1))
+    print('\t',err,'\n')
 
-        print('Composition of rotation error:')
-        err = abs(p2-p3).sum()/np.prod(p2.shape)
-        print('\t',err,'\n')
 
-        print('Rotate then apply inverse rotation error:')
-        err = abs(p4-p1).sum()/np.prod(p4.shape)
-        print('\t',err,'\n')
+    from symmetries import hcp_syms
+
+    q1_fz = fz_reduce(q1,hcp_syms)
+
+    d1 = rot_dist(q1_fz)
+    d2 = rot_dist_w_syms(q1,None,hcp_syms)
+
+    print('FZ reduce theta vs min dist over all symmetries error:')
+    err = abs(d1-d2).sum()/len(d1.reshape(-1))
+    print('\t',err,'\t')
+
+
+
+    plot_cdf(q1,None,hcp_syms)
 
