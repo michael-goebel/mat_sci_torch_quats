@@ -1,7 +1,7 @@
 import numpy as np
 #from quats import Quat
 import torch
-from quats3 import outer_prod
+from quats import outer_prod
 
 #rotate by 0 or 180 degrees about x axis
 hcp_r1 = torch.eye(4)[:2]
