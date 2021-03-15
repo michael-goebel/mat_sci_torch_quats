@@ -104,7 +104,7 @@ def rot_dist(q1,q2=None):
 def rot_dist_w_syms(q1,q2,syms):
     #q1_w_syms = q1.outer_prod(syms)
     q1_w_syms = outer_prod(q1,syms)
-    if q2 is not None: q2 = q2[...,None]
+    if q2 is not None: q2 = q2[...,None,:]
     dists = rot_dist(q1_w_syms,q2)
     #if _is_np(dists): dist_min = dists.min(-1)
     #else: dist_min = dists.min(-1)[0]
