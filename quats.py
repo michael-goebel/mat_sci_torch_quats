@@ -49,7 +49,6 @@ def hadamard_prod(q1,q2):
 # output will be of size (s1,s2,s3,s4,s5,4)
 def outer_prod(q1,q2):
     X1 = vec2mat(q1)
-    #X2 = _moveaxis(q2.X,-1,0)
     X2 = torch.movedim(q2,-1,0)
     X1_flat = X1.reshape((-1,4))
     X2_flat = X2.reshape((4,-1))
@@ -93,23 +92,78 @@ def quat_dist(q1,q2=None):
     else: corr = (q1*q2).sum(-1)
     return torch.arccos(corr)
 
+def quat_dist2(q1,q2=None):
+    if q2 is None: mse = (q1[...,0]-1)**2 + (q1[...,1:]**2).sum(-1)
+    else: mse = ((q1-q2)**2).sum(-1)
+    corr = 1 - (1/2)*mse
+    assert torch.max(abs(corr)) < 1.001, "Correlation score is outside " + \
+            "of [-1,1] range. Check that all inputs are inside unit ball"
+    corr_clamp = torch.clamp(corr,-1,1)
+    return torch.arccos(corr)
 
 # Get distance between two sets rotations, accounting for q <-> -q symmetry
 def rot_dist(q1,q2=None):
     dq = quat_dist(q1,q2)
     return pi - abs(2*dq - pi)    
 
+def rot_dist2(q1,q2=None):
+    q1_w_neg = torch.stack((q1,-q1),dim=-2)
+    if q2 is not None: q2 = q2[...,None,:]
+    dists = quat_dist2(q1_w_neg,q2)
+    dist_min = dists.min(-1)[0]
+    return dist_min
+
+
+
+
+
 # Similar to rot_dist, but will brute-force check all of the provided
 # symmetries, and return the minimum.
 def rot_dist_w_syms(q1,q2,syms):
-    #q1_w_syms = q1.outer_prod(syms)
     q1_w_syms = outer_prod(q1,syms)
     if q2 is not None: q2 = q2[...,None,:]
     dists = rot_dist(q1_w_syms,q2)
-    #if _is_np(dists): dist_min = dists.min(-1)
-    #else: dist_min = dists.min(-1)[0]
     dist_min = dists.min(-1)[0]
     return dist_min
+
+
+dist_func_dict = {'rot_dist': rot_dist,
+                  'loss_w_tanhc': loss_w_tanhc
+                 }
+
+def dist(q1,q2=None,dist_func=rot_dist,syms=None):
+    if dist_func in dist_func_dict.keys():
+        dist_func = dist_func_dict[dist_func]
+    else: assert callable(dist_func)
+    if syms is not None:
+        q1_w_syms = outer_prod(q1,syms)
+        if q2 is not None: q2 = q2[...,None,:]
+        dists = dist_func(q1,q2)
+        dist_min = dists.min(-1)[0]
+    else:
+        return dist_func(q1,q2)
+
+
+class Dist:
+    def __init__(self,dist_func,syms=None):
+        if dist_func in dist_func_dict.keys():
+            dist_func = dist_func_dict[dist_func]
+        else: assert callable(dist_func)
+        self.syms = syms
+    def __call__(self,q1,q2):
+        if self.syms is not None:
+            q1_w_syms = outer_prod(q1,self.syms)
+            if q2 is not None: q2 = q2[...,None,:]
+            dists = self.dist_func(q1,q2)
+            dist_min = dists.min(-1)[0]
+        else:
+            return self.dist_func(q1,q2)
+    
+    def __str__(self):
+        return f'Dist -> dist_func: {self.dist_func}, ' + \
+               f'syms: {self.syms is not None}'
+
+
 
 def fz_reduce(q,syms):
     shape = q.shape
@@ -164,11 +218,19 @@ def plot_cdf(q1,q2,syms):
 
 
 def tanhc(x):
+    """
+    Computes tanh(x)/x. For x close to 0, the function is defined, but not
+    numerically stable. For values less than eps, a taylor series is used.
+    """
     eps = 0.05
     mask = (np.abs(x) < eps).float()
+    # clip x values, to plug into tanh(x)/x
     x_clip = torch.clamp(abs(x),min=eps)
+    # taylor series evaluation
     output_ts = 1 - (x**2)/3 + 2*(x**4)/15 - 17*(x**6)/315
+    # regular function evaluation for tanh(x)/x
     output_ht = torch.tanh(x_clip)/x_clip
+    # use taylor series if x is close to 0, otherwise, use tanh(x)/x
     output = mask*output_ts + (1-mask)*output_ht
     return output
 
@@ -191,6 +253,23 @@ def loss_w_tanh(pred,label):
     return loss
 
 
+def tanh_act(q):
+    return q*tanhc(torch.norm(q,dim=-1,keepdim=True))
+    
+def safe_divide_act(q,eps=10**-5):
+    return q/(eps+torch.norm(q,dim=-1,keepdim=True))
+
+
+def ActAndLoss:
+    def __init__(self,act,loss):
+        self.act = act
+        self.loss = loss
+    def __call__(self,X,labels):
+        return self.loss(self.act(X),labels)
+    def __str__(self):
+        return f'Act and Loss: ({self.act},{self.loss})'
+
+
 
 # A simple script to test the quats class for numpy and torch
 if __name__ == '__main__':
@@ -202,6 +281,7 @@ if __name__ == '__main__':
 
     q1 = rand_quats(M)
     q2 = rand_quats(N)
+    q3 = rand_quats(M)
     p1 = rand_points(K)
 
     p2 = rotate(q2,rotate(q1,p1))
@@ -217,8 +297,16 @@ if __name__ == '__main__':
     err = abs(p4-p1).sum()/len(p1.reshape(-1))
     print('\t',err,'\n')
 
+    d1 = rot_dist(q1,q3)
+    d2 = rot_dist2(q1,q3)
+
+    print('Different quat distance error')
+    err = abs(d1-d2).sum()/len(q1.reshape(-1))
+    print('\t',err,'\t')
 
     from symmetries import hcp_syms
+
+    print(rot_dist_w_syms(q1[:3],q2[:3],hcp_syms))
 
     q1_fz = fz_reduce(q1,hcp_syms)
 
