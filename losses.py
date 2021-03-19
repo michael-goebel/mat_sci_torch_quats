@@ -1,28 +1,6 @@
 import torch
-from quats import rand_quats, outer_prod
+from quats import rand_quats, outer_prod, rot_dist
 
-
-def quat_dist(q1,q2=None):
-    """
-    Computes distance between two quats. If q1 and q2 are on the unit sphere,
-    this will return the arc length along the sphere. For points within the 
-    sphere, it reduces to a function of MSE.
-    """
-    if q2 is None: mse = (q1[...,0]-1)**2 + (q1[...,1:]**2).sum(-1)
-    else: mse = ((q1-q2)**2).sum(-1)
-    corr = 1 - (1/2)*mse
-    assert torch.max(abs(corr)) < 1.001, "Correlation score is outside " + \
-            "of [-1,1] range. Check that all inputs are inside unit ball"
-    corr_clamp = torch.clamp(corr,-1,1)
-    return torch.arccos(corr)
-
-def rot_dist(q1,q2=None):
-    """ Get dist between two rotations, with q <-> -q symmetry """
-    q1_w_neg = torch.stack((q1,-q1),dim=-2)
-    if q2 is not None: q2 = q2[...,None,:]
-    dists = quat_dist(q1_w_neg,q2)
-    dist_min = dists.min(-1)[0]
-    return dist_min
 
 def l1(q1,q2):
     """ Basic L1 loss """
@@ -117,7 +95,7 @@ if __name__ == '__main__':
         print(i)
         d = i(q1,q2)
         L = d.sum()
-
+        print(L)
 
 
 
