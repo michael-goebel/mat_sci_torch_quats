@@ -78,6 +78,18 @@ def rand_quats(shape,dtype=torch.FloatTensor):
 	return rand_arr(shape+(4,), dtype)
 
 
+# arccos, expanded from range [-1,1] to all real numbers
+# values outside of [-1,1] and replaced with a line of slope pi/2, such that
+# the function is continuous
+def safe_arccos(x):
+    mask = (torch.abs(x) < 1).float()
+    x_clip = torch.clamp(x,min=-1,max=1)
+    output_arccos = torch.arccos(x_clip)
+    output_linear = (1 - x)*pi/2
+    output = mask*output_arccos + (1-mask)*output_linear
+    return output
+
+
 def quat_dist(q1,q2=None):
 	"""
 	Computes distance between two quats. If q1 and q2 are on the unit sphere,
@@ -87,10 +99,9 @@ def quat_dist(q1,q2=None):
 	if q2 is None: mse = (q1[...,0]-1)**2 + (q1[...,1:]**2).sum(-1)
 	else: mse = ((q1-q2)**2).sum(-1)
 	corr = 1 - (1/2)*mse
-	assert torch.max(abs(corr)) < 1.001, "Correlation score is outside " + \
-			"of [-1,1] range. Check that all inputs are inside unit ball"
 	corr_clamp = torch.clamp(corr,-1,1)
-	return torch.arccos(corr)
+	return safe_arccos(corr)
+	#return torch.arccos(corr)
 
 def rot_dist(q1,q2=None):
 	""" Get dist between two rotations, with q <-> -q symmetry """
