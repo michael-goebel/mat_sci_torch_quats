@@ -1,5 +1,5 @@
 import torch
-from quats import rand_quats, outer_prod, rot_dist
+from quats import rand_quats, outer_prod, approx_rot_dist
 
 
 def l1(q1,q2):
@@ -91,7 +91,7 @@ if __name__ == '__main__':
 	
 	for act in [None,tanh_act,safe_divide_act]:
 		for syms in [None,hcp_syms]:
-			for dist in [l1,l2,rot_dist]:
+			for dist in [l1,l2,approx_rot_dist]:
 				acts_and_losses.append(ActAndLoss(act,Loss(dist,syms,1)))
 	
 
