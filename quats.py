@@ -107,7 +107,7 @@ def rot_dist(q1,q2=None):
         """ Get dist between two rotations, with q <-> -q symmetry """
         q1_w_neg = torch.stack((q1,-q1),dim=-2)
         if q2 is not None: q2 = q2[...,None,:]
-        dists = quat_dist(q1_w_neg,q2)
+        dists = 2*quat_dist(q1_w_neg,q2)
         dist_min = dists.min(-1)[0]
         return dist_min
 
